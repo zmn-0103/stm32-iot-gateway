@@ -108,7 +108,7 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
-
+  osKernelInitialize();
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */

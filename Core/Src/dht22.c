@@ -242,14 +242,5 @@ DHT22_Status DHT22_Read(DHT22_Data *data)
     data->valid = 1;
     last_read_tick = HAL_GetTick();
 
-    /* 调试: 打印原始字节 */
-    {
-        extern UART_HandleTypeDef huart3;
-        char dbg[32];
-        int n = snprintf(dbg, sizeof(dbg), "raw:%02X%02X%02X%02X%02X\r\n",
-                         raw[0], raw[1], raw[2], raw[3], raw[4]);
-        HAL_UART_Transmit(&huart3, (uint8_t *)dbg, n, 100);
-    }
-
     return DHT22_OK;
 }

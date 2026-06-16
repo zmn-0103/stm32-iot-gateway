@@ -1,7 +1,7 @@
 /**
  * @file    OLED.c
- * @brief   SSD1306 OLED 驱动 (软件 I2C, PB6 SCL / PB7 SDA, 8x16 字体)
- * @note    移植自江科大 STM32F10x 源码，适配 STM32F4 HAL
+ * @brief   SSD1306 OLED 驱动 (硬件 I2C1, PB6 SCL / PB7 SDA, 8x16 字体)
+ * @note    移植自江科大源码，改用 STM32F4 HAL 硬件 I2C
  */
 
 #include "OLED.h"
@@ -9,77 +9,24 @@
 #include "main.h"
 #include <stdio.h>
 
-/* 引脚定义: PB6 = SCL, PB7 = SDA */
-#define OLED_SCL_PORT   GPIOB
-#define OLED_SCL_PIN    GPIO_PIN_6
-#define OLED_SDA_PORT   GPIOB
-#define OLED_SDA_PIN    GPIO_PIN_7
+/* SSD1306 I2C 地址 (7-bit: 0x3C, HAL 自动左移) */
+#define OLED_I2C_ADDR   0x3C
 
-#define OLED_W_SCL(x)   HAL_GPIO_WritePin(OLED_SCL_PORT, OLED_SCL_PIN, (x) ? GPIO_PIN_SET : GPIO_PIN_RESET)
-#define OLED_W_SDA(x)   HAL_GPIO_WritePin(OLED_SDA_PORT, OLED_SDA_PIN, (x) ? GPIO_PIN_SET : GPIO_PIN_RESET)
+/* 超时 (ms) */
+#define OLED_I2C_TIMEOUT  100
 
-/**
- * @brief  引脚初始化 (开漏输出, 软件 I2C)
- */
-static void OLED_I2C_Init(void)
-{
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-    GPIO_InitTypeDef GPIO_InitStructure = {0};
-    GPIO_InitStructure.Mode  = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStructure.Pull  = GPIO_NOPULL;
-    GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStructure.Pin   = OLED_SCL_PIN | OLED_SDA_PIN;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStructure);
-
-    OLED_W_SCL(1);
-    OLED_W_SDA(1);
-}
-
-static void OLED_I2C_Start(void)
-{
-    OLED_W_SDA(1);
-    OLED_W_SCL(1);
-    OLED_W_SDA(0);
-    OLED_W_SCL(0);
-}
-
-static void OLED_I2C_Stop(void)
-{
-    OLED_W_SDA(0);
-    OLED_W_SCL(1);
-    OLED_W_SDA(1);
-}
-
-static void OLED_I2C_SendByte(uint8_t Byte)
-{
-    uint8_t i;
-    for (i = 0; i < 8; i++)
-    {
-        OLED_W_SDA(!!(Byte & (0x80 >> i)));
-        OLED_W_SCL(1);
-        OLED_W_SCL(0);
-    }
-    OLED_W_SCL(1);
-    OLED_W_SCL(0);
-}
+extern I2C_HandleTypeDef hi2c1;
 
 static void OLED_WriteCommand(uint8_t Command)
 {
-    OLED_I2C_Start();
-    OLED_I2C_SendByte(0x78);
-    OLED_I2C_SendByte(0x00);
-    OLED_I2C_SendByte(Command);
-    OLED_I2C_Stop();
+    HAL_I2C_Mem_Write(&hi2c1, OLED_I2C_ADDR << 1, 0x00,
+                      I2C_MEMADD_SIZE_8BIT, &Command, 1, OLED_I2C_TIMEOUT);
 }
 
 static void OLED_WriteData(uint8_t Data)
 {
-    OLED_I2C_Start();
-    OLED_I2C_SendByte(0x78);
-    OLED_I2C_SendByte(0x40);
-    OLED_I2C_SendByte(Data);
-    OLED_I2C_Stop();
+    HAL_I2C_Mem_Write(&hi2c1, OLED_I2C_ADDR << 1, 0x40,
+                      I2C_MEMADD_SIZE_8BIT, &Data, 1, OLED_I2C_TIMEOUT);
 }
 
 static void OLED_SetCursor(uint8_t Y, uint8_t X)
@@ -171,14 +118,8 @@ void OLED_ShowFloat(uint8_t Line, uint8_t Column, float value)
 
 void OLED_Init(void)
 {
-    uint32_t i, j;
-
-    for (i = 0; i < 1000; i++)
-    {
-        for (j = 0; j < 1000; j++);
-    }
-
-    OLED_I2C_Init();
+    /* 硬件 I2C1 已在 MX_I2C1_Init() 中初始化，无需再配置引脚 */
+    HAL_Delay(100);  /* OLED 上电稳定延时 */
 
     OLED_WriteCommand(0xAE);
     OLED_WriteCommand(0xD5);
