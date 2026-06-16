@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "dht22.h"
 #include "OLED.h"
+#include "w5500.h"
 #include <stdio.h>
 #include <string.h>
 /* USER CODE END Includes */
@@ -273,10 +274,49 @@ void vDisplayTask(void *argument)
 void vNetworkTask(void *argument)
 {
   /* USER CODE BEGIN vNetworkTask */
-  /* Infinite loop */
+  char buf[64];
+  int len;
+
+  /* W5500 网络配置 (直连电脑以太网) */
+  W5500_Config net = {
+    .mac    = {0x02, 0x08, 0xDC, 0x01, 0x02, 0x03},
+    .ip     = {192, 168, 1, 100},
+    .subnet = {255, 255, 255, 0},
+    .gateway= {192, 168, 1, 1},   /* 电脑以太网 IP */
+  };
+
+  /* 初始化 W5500 */
+  if (!W5500_Init(&net)) {
+    len = snprintf(buf, sizeof(buf), "W5500 INIT FAIL\r\n");
+    HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+    for (;;) osDelay(1000);
+  }
+
+  len = snprintf(buf, sizeof(buf), "W5500 OK v=0x%02X\r\n", W5500_GetVersion());
+  HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+
+  /* 等待 PHY 链路建立 */
+  for (int i = 0; i < 50; i++) {
+    if (W5500_GetPHYStatus())
+      break;
+    osDelay(100);
+  }
+
+  if (W5500_GetPHYStatus()) {
+    len = snprintf(buf, sizeof(buf), "LINK UP %d.%d.%d.%d\r\n",
+                   net.ip[0], net.ip[1], net.ip[2], net.ip[3]);
+  } else {
+    len = snprintf(buf, sizeof(buf), "LINK DOWN\r\n");
+  }
+  HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+
   for(;;)
   {
-    osDelay(1);
+    osDelay(5000);
+    /* 周期检查链路状态 */
+    uint8_t link = W5500_GetPHYStatus();
+    len = snprintf(buf, sizeof(buf), "PHY:%s\r\n", link ? "UP" : "DOWN");
+    HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
   }
   /* USER CODE END vNetworkTask */
 }
