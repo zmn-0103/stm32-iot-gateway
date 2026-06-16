@@ -310,13 +310,60 @@ void vNetworkTask(void *argument)
   }
   HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
 
+  /* ---- TCP Server on port 5000 ---- */
+  #define TCP_PORT  5000
+  #define SOCK_TCP  0
+  uint8_t server_ok = W5500_TCP_Open(SOCK_TCP, TCP_PORT) &&
+                      W5500_TCP_Listen(SOCK_TCP);
+  if (server_ok) {
+    len = snprintf(buf, sizeof(buf), "TCP LISTEN :%d\r\n", TCP_PORT);
+  } else {
+    len = snprintf(buf, sizeof(buf), "TCP LISTEN FAIL\r\n");
+  }
+  HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+
+  uint8_t rx_buf[128];
   for(;;)
   {
-    osDelay(5000);
-    /* 周期检查链路状态 */
-    uint8_t link = W5500_GetPHYStatus();
-    len = snprintf(buf, sizeof(buf), "PHY:%s\r\n", link ? "UP" : "DOWN");
-    HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+    uint8_t sr = W5500_GetSocketStatus(SOCK_TCP);
+
+    if (sr == W5500_Sn_SR_ESTABLISHED) {
+      uint16_t rlen = W5500_TCP_Recv(SOCK_TCP, rx_buf, sizeof(rx_buf) - 1);
+      if (rlen > 0) {
+        rx_buf[rlen] = '\0';
+        len = snprintf(buf, sizeof(buf), "RX[%d]:%s\r\n", rlen, rx_buf);
+        HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+
+        /* 回复温湿度 */
+        DHT22_Data d;
+        if (osMutexAcquire(g_sensor_mutex, 100) == osOK) {
+          d = g_sensor_data;
+          osMutexRelease(g_sensor_mutex);
+        }
+        if (d.valid) {
+          int t = (int)(d.temperature * 10);
+          int h = (int)(d.humidity * 10);
+          len = snprintf(buf, sizeof(buf), "T:%d.%d H:%d.%d\r\n",
+                         t/10, (t<0?-t:t)%10, h/10, h%10);
+        } else {
+          len = snprintf(buf, sizeof(buf), "SENSOR N/A\r\n");
+        }
+        W5500_TCP_Send(SOCK_TCP, (uint8_t *)buf, len);
+      }
+    }
+    else if (sr == W5500_Sn_SR_CLOSE_WAIT) {
+      W5500_TCP_Close(SOCK_TCP);
+      W5500_TCP_Open(SOCK_TCP, TCP_PORT);
+      W5500_TCP_Listen(SOCK_TCP);
+      len = snprintf(buf, sizeof(buf), "CLIENT DC, RE-LISTEN\r\n");
+      HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+    }
+    else if (sr == W5500_Sn_SR_CLOSED) {
+      W5500_TCP_Open(SOCK_TCP, TCP_PORT);
+      W5500_TCP_Listen(SOCK_TCP);
+    }
+
+    osDelay(100);
   }
   /* USER CODE END vNetworkTask */
 }

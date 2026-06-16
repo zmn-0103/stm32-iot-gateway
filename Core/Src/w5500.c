@@ -195,6 +195,20 @@ uint8_t W5500_TCP_Open(uint8_t sock, uint16_t port)
     return 1;
 }
 
+uint8_t W5500_TCP_Listen(uint8_t sock)
+{
+    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    W5500_WriteReg(W5500_Sn_CR, bsb, W5500_Sn_CR_LISTEN);
+    HAL_Delay(1);
+    return (W5500_ReadReg(W5500_Sn_SR, bsb) == W5500_Sn_SR_LISTEN);
+}
+
+uint8_t W5500_GetSocketStatus(uint8_t sock)
+{
+    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    return W5500_ReadReg(W5500_Sn_SR, bsb);
+}
+
 uint8_t W5500_TCP_Connect(uint8_t sock, const uint8_t *ip, uint16_t port)
 {
     uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);

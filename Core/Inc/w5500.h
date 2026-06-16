@@ -54,6 +54,7 @@
 #define W5500_Sn_SR_INIT        0x13
 #define W5500_Sn_SR_LISTEN      0x14
 #define W5500_Sn_SR_ESTABLISHED 0x17
+#define W5500_Sn_SR_CLOSE_WAIT  0x1C
 #define W5500_Sn_SR_SOCK_TCP    0x17
 
 /* Socket 模式 */
@@ -84,7 +85,9 @@ void     W5500_WriteBuf(uint16_t addr, uint8_t bsb, const uint8_t *buf, uint16_t
 
 /* Socket TCP 操作 */
 uint8_t  W5500_TCP_Open(uint8_t sock, uint16_t port);
+uint8_t  W5500_TCP_Listen(uint8_t sock);
 uint8_t  W5500_TCP_Connect(uint8_t sock, const uint8_t *ip, uint16_t port);
+uint8_t  W5500_GetSocketStatus(uint8_t sock);
 uint16_t W5500_TCP_Send(uint8_t sock, const uint8_t *buf, uint16_t len);
 uint16_t W5500_TCP_Recv(uint8_t sock, uint8_t *buf, uint16_t maxlen);
 void     W5500_TCP_Close(uint8_t sock);
