@@ -9,11 +9,16 @@
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
 
-/* W5500 SPI 帧头: 块选择 (BSB[4:0]) + 读写控制 (RWB) + 地址 */
-#define W5500_BSB_COMMON    0x00  /* 通用寄存器 */
-#define W5500_BSB_SOCK0_REG 0x08  /* Socket 0 寄存器 */
-#define W5500_BSB_SOCK0_TX  0x10  /* Socket 0 TX 缓冲区 */
-#define W5500_BSB_SOCK0_RX  0x18  /* Socket 0 RX 缓冲区 */
+/* W5500 SPI 帧头: 控制字节 = BSB[4:0]<<3 | RWB | OM[1:0]
+ * BSB 编码 (左移3位后):
+ *   Common:  0x00
+ *   sock=0: REG=0x08, TX=0x10, RX=0x18
+ *   sock=1: REG=0x20, TX=0x28, RX=0x30
+ *   sock=n: REG=(3n+1)<<3 */
+#define W5500_BSB_COMMON       (0x00 << 3)  /* 通用寄存器 */
+#define W5500_BSB_SOCK_REG(s)  ((3 * (s) + 1) << 3)  /* Socket s 寄存器 */
+#define W5500_BSB_SOCK_TX(s)   ((3 * (s) + 2) << 3)  /* Socket s TX 缓冲区 */
+#define W5500_BSB_SOCK_RX(s)   ((3 * (s) + 3) << 3)  /* Socket s RX 缓冲区 */
 
 #define W5500_READ          0x00
 #define W5500_WRITE         0x04

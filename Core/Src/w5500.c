@@ -19,6 +19,7 @@
 #include "w5500.h"
 #include "main.h"
 #include <string.h>
+#include <stdio.h>
 
 extern SPI_HandleTypeDef hspi1;
 
@@ -145,7 +146,7 @@ uint8_t W5500_Init(const W5500_Config *cfg)
      * Socket 0: 8KB TX + 8KB RX
      * Socket 1~7: 各 1KB TX + 1KB RX (8×1KB = 8KB) */
     for (uint8_t s = 0; s < 8; s++) {
-        uint8_t bsb = W5500_BSB_SOCK0_REG | (s << 2);
+        uint8_t bsb = W5500_BSB_SOCK_REG(s);
         W5500_WriteReg(W5500_Sn_TXMEM_SIZE, bsb, (s == 0) ? 8 : 1);
         W5500_WriteReg(W5500_Sn_RXMEM_SIZE, bsb, (s == 0) ? 8 : 1);
     }
@@ -169,11 +170,16 @@ uint8_t W5500_GetVersion(void)
 
 uint8_t W5500_TCP_Open(uint8_t sock, uint16_t port)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
 
     /* 关闭 */
     W5500_WriteReg(W5500_Sn_CR, bsb, W5500_Sn_CR_DISCON);
+    for (int i = 0; i < 100; i++) {
+        if (W5500_ReadReg(W5500_Sn_CR, bsb) == 0) break;
+        HAL_Delay(1);
+    }
     W5500_WriteReg(W5500_Sn_CR, bsb, 0x00);
+    HAL_Delay(1);
 
     /* TCP 模式 */
     W5500_WriteReg(W5500_Sn_MR, bsb, W5500_Sn_MR_TCP);
@@ -183,12 +189,14 @@ uint8_t W5500_TCP_Open(uint8_t sock, uint16_t port)
 
     /* 打开 */
     W5500_WriteReg(W5500_Sn_CR, bsb, W5500_Sn_CR_OPEN);
-    HAL_Delay(1);
+    for (int i = 0; i < 100; i++) {
+        if (W5500_ReadReg(W5500_Sn_CR, bsb) == 0) break;
+        HAL_Delay(1);
+    }
 
     /* 检查状态 */
     uint8_t sr = W5500_ReadReg(W5500_Sn_SR, bsb);
     if (sr != W5500_Sn_SR_INIT) {
-        W5500_WriteReg(W5500_Sn_CR, bsb, 0x00);
         return 0;
     }
 
@@ -197,21 +205,24 @@ uint8_t W5500_TCP_Open(uint8_t sock, uint16_t port)
 
 uint8_t W5500_TCP_Listen(uint8_t sock)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
     W5500_WriteReg(W5500_Sn_CR, bsb, W5500_Sn_CR_LISTEN);
-    HAL_Delay(1);
+    for (int i = 0; i < 100; i++) {
+        if (W5500_ReadReg(W5500_Sn_CR, bsb) == 0) break;
+        HAL_Delay(1);
+    }
     return (W5500_ReadReg(W5500_Sn_SR, bsb) == W5500_Sn_SR_LISTEN);
 }
 
 uint8_t W5500_GetSocketStatus(uint8_t sock)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
     return W5500_ReadReg(W5500_Sn_SR, bsb);
 }
 
 uint8_t W5500_TCP_Connect(uint8_t sock, const uint8_t *ip, uint16_t port)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
 
     /* 目标 IP 和端口 */
     W5500_WriteBuf(W5500_Sn_DIPR, bsb, ip, 4);
@@ -219,14 +230,28 @@ uint8_t W5500_TCP_Connect(uint8_t sock, const uint8_t *ip, uint16_t port)
 
     /* 发起连接 */
     W5500_WriteReg(W5500_Sn_CR, bsb, W5500_Sn_CR_CONNECT);
+    for (int i = 0; i < 100; i++) {
+        if (W5500_ReadReg(W5500_Sn_CR, bsb) == 0) break;
+        HAL_Delay(1);
+    }
 
-    return 1;
+    /* 等待连接建立或超时 (~3s) */
+    for (int i = 0; i < 300; i++) {
+        uint8_t sr = W5500_ReadReg(W5500_Sn_SR, bsb);
+        if (sr == W5500_Sn_SR_ESTABLISHED)
+            return 1;   /* 连接成功 */
+        if (sr == W5500_Sn_SR_CLOSED)
+            return 0;   /* 连接失败 */
+        HAL_Delay(10);
+    }
+
+    return 0;  /* 超时 */
 }
 
 uint16_t W5500_TCP_Send(uint8_t sock, const uint8_t *buf, uint16_t len)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
-    uint8_t txb = W5500_BSB_SOCK0_TX | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
+    uint8_t txb = W5500_BSB_SOCK_TX(sock);
 
     /* 检查 TX 空闲大小 */
     uint16_t free_size = W5500_ReadReg16(W5500_Sn_TX_FSR, bsb);
@@ -246,8 +271,8 @@ uint16_t W5500_TCP_Send(uint8_t sock, const uint8_t *buf, uint16_t len)
 
 uint16_t W5500_TCP_Recv(uint8_t sock, uint8_t *buf, uint16_t maxlen)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
-    uint8_t rxb = W5500_BSB_SOCK0_RX | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
+    uint8_t rxb = W5500_BSB_SOCK_RX(sock);
 
     uint16_t recv_size = W5500_ReadReg16(W5500_Sn_RX_RSR, bsb);
     if (recv_size == 0)
@@ -268,7 +293,10 @@ uint16_t W5500_TCP_Recv(uint8_t sock, uint8_t *buf, uint16_t maxlen)
 
 void W5500_TCP_Close(uint8_t sock)
 {
-    uint8_t bsb = W5500_BSB_SOCK0_REG | (sock << 2);
+    uint8_t bsb = W5500_BSB_SOCK_REG(sock);
     W5500_WriteReg(W5500_Sn_CR, bsb, W5500_Sn_CR_DISCON);
-    W5500_WriteReg(W5500_Sn_CR, bsb, 0x00);
+    for (int i = 0; i < 100; i++) {
+        if (W5500_ReadReg(W5500_Sn_CR, bsb) == 0) break;
+        HAL_Delay(1);
+    }
 }

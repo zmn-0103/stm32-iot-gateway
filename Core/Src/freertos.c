@@ -277,13 +277,20 @@ void vNetworkTask(void *argument)
   char buf[64];
   int len;
 
-  /* W5500 网络配置 (直连电脑以太网) */
+  /* ---- 网络配置 ---- */
+  #define SOCK_TCP       0
+  #define SERVER_IP      192, 168, 1, 1    /* 上位机 IP */
+  #define SERVER_PORT    5000               /* 上位机端口 */
+  #define REPORT_INTERVAL 5000             /* 上报间隔 5s */
+
   W5500_Config net = {
     .mac    = {0x02, 0x08, 0xDC, 0x01, 0x02, 0x03},
     .ip     = {192, 168, 1, 100},
     .subnet = {255, 255, 255, 0},
-    .gateway= {192, 168, 1, 1},   /* 电脑以太网 IP */
+    .gateway= {192, 168, 1, 1},
   };
+
+  const uint8_t server_ip[] = {SERVER_IP};
 
   /* 初始化 W5500 */
   if (!W5500_Init(&net)) {
@@ -310,60 +317,70 @@ void vNetworkTask(void *argument)
   }
   HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
 
-  /* ---- TCP Server on port 5000 ---- */
-  #define TCP_PORT  5000
-  #define SOCK_TCP  0
-  uint8_t server_ok = W5500_TCP_Open(SOCK_TCP, TCP_PORT) &&
-                      W5500_TCP_Listen(SOCK_TCP);
-  if (server_ok) {
-    len = snprintf(buf, sizeof(buf), "TCP LISTEN :%d\r\n", TCP_PORT);
-  } else {
-    len = snprintf(buf, sizeof(buf), "TCP LISTEN FAIL\r\n");
-  }
-  HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
-
-  uint8_t rx_buf[128];
+  /* ---- TCP Client 主循环: 连接上位机并定时上报 ---- */
   for(;;)
   {
-    uint8_t sr = W5500_GetSocketStatus(SOCK_TCP);
-
-    if (sr == W5500_Sn_SR_ESTABLISHED) {
-      uint16_t rlen = W5500_TCP_Recv(SOCK_TCP, rx_buf, sizeof(rx_buf) - 1);
-      if (rlen > 0) {
-        rx_buf[rlen] = '\0';
-        len = snprintf(buf, sizeof(buf), "RX[%d]:%s\r\n", rlen, rx_buf);
-        HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
-
-        /* 回复温湿度 */
-        DHT22_Data d;
-        if (osMutexAcquire(g_sensor_mutex, 100) == osOK) {
-          d = g_sensor_data;
-          osMutexRelease(g_sensor_mutex);
-        }
-        if (d.valid) {
-          int t = (int)(d.temperature * 10);
-          int h = (int)(d.humidity * 10);
-          len = snprintf(buf, sizeof(buf), "T:%d.%d H:%d.%d\r\n",
-                         t/10, (t<0?-t:t)%10, h/10, h%10);
-        } else {
-          len = snprintf(buf, sizeof(buf), "SENSOR N/A\r\n");
-        }
-        W5500_TCP_Send(SOCK_TCP, (uint8_t *)buf, len);
-      }
+    /* 1. 打开 Socket */
+    if (!W5500_TCP_Open(SOCK_TCP, 0)) {   /* 本地端口 0 = 随机分配 */
+      osDelay(1000);
+      continue;
     }
-    else if (sr == W5500_Sn_SR_CLOSE_WAIT) {
-      W5500_TCP_Close(SOCK_TCP);
-      W5500_TCP_Open(SOCK_TCP, TCP_PORT);
-      W5500_TCP_Listen(SOCK_TCP);
-      len = snprintf(buf, sizeof(buf), "CLIENT DC, RE-LISTEN\r\n");
+
+    /* 2. 连接上位机 */
+    len = snprintf(buf, sizeof(buf), "CONNECTING %d.%d.%d.%d:%d\r\n",
+                   server_ip[0], server_ip[1], server_ip[2], server_ip[3],
+                   SERVER_PORT);
+    HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+
+    if (!W5500_TCP_Connect(SOCK_TCP, server_ip, SERVER_PORT)) {
+      len = snprintf(buf, sizeof(buf), "CONNECT FAIL, RETRY\r\n");
       HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
-    }
-    else if (sr == W5500_Sn_SR_CLOSED) {
-      W5500_TCP_Open(SOCK_TCP, TCP_PORT);
-      W5500_TCP_Listen(SOCK_TCP);
+      W5500_TCP_Close(SOCK_TCP);
+      osDelay(3000);
+      continue;
     }
 
-    osDelay(100);
+    len = snprintf(buf, sizeof(buf), "CONNECTED\r\n");
+    HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+
+    /* 3. 连接成功，定时上报温湿度 */
+    while (1)
+    {
+      uint8_t sr = W5500_GetSocketStatus(SOCK_TCP);
+
+      /* 检查连接是否断开 */
+      if (sr == W5500_Sn_SR_CLOSE_WAIT || sr == W5500_Sn_SR_CLOSED) {
+        len = snprintf(buf, sizeof(buf), "DISCONNECTED\r\n");
+        HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+        W5500_TCP_Close(SOCK_TCP);
+        break;  /* 跳出重连 */
+      }
+
+      /* 读取传感器数据 */
+      DHT22_Data d = {0};
+      if (osMutexAcquire(g_sensor_mutex, 100) == osOK) {
+        d = g_sensor_data;
+        osMutexRelease(g_sensor_mutex);
+      }
+
+      /* 组装并发送 */
+      if (d.valid) {
+        int t = (int)(d.temperature * 10);
+        int h = (int)(d.humidity * 10);
+        len = snprintf(buf, sizeof(buf), "T:%d.%d H:%d.%d\r\n",
+                       t/10, (t<0?-t:t)%10, h/10, h%10);
+      } else {
+        len = snprintf(buf, sizeof(buf), "SENSOR N/A\r\n");
+      }
+
+      uint16_t sent = W5500_TCP_Send(SOCK_TCP, (uint8_t *)buf, len);
+      if (sent == 0) {
+        len = snprintf(buf, sizeof(buf), "SEND FAIL\r\n");
+        HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
+      }
+
+      osDelay(REPORT_INTERVAL);
+    }
   }
   /* USER CODE END vNetworkTask */
 }
