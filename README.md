@@ -1,6 +1,6 @@
 # STM32 IoT Gateway
 
-基于 STM32F407VET6 的工业物联网网关，集成温湿度采集、以太网通信和 Web Dashboard。
+基于 STM32F407VET6 的物联网网关，集成温湿度采集、以太网通信和 OLED 实时显示。
 
 ## 硬件平台
 
@@ -16,11 +16,9 @@
 
 - DHT22 温湿度数据采集 (2s 周期)
 - W5500 有线以太网通信 (硬件 TCP/IP 协议栈)
-- SSD1306 OLED 实时显示
-- HTTP Web Dashboard (温湿度实时展示)
-- JSON API 接口 (`/api/sensor`)
-- SSE 实时数据推送 (`/sse`)
-- FreeRTOS 多任务调度 (4 个任务)
+- TCP Client 定时上报温湿度数据到上位机
+- SSD1306 OLED 实时显示 (网络状态、温湿度)
+- FreeRTOS 多任务调度 (3 个任务)
 
 ## 项目结构
 
@@ -75,31 +73,13 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
   -c "program build/Debug/stm32-iot-gateway.elf verify reset exit"
 ```
 
-VSCode 调试配置 (`.vscode/launch.json`):
-
-```json
-{
-  "version": "0.2.0",
-  "configurations": [{
-    "name": "Cortex Debug",
-    "executable": "./build/Debug/stm32-iot-gateway.elf",
-    "request": "launch",
-    "type": "cortex-debug",
-    "serverType": "openocd",
-    "configFiles": ["interface/stlink.cfg", "target/stm32f4x.cfg"],
-    "runToEntryPoint": "main"
-  }]
-}
-```
-
 ## FreeRTOS 任务
 
 | 任务 | 优先级 | 栈大小 | 职责 |
 | --- | --- | --- | --- |
-| NetworkTask | AboveNormal | 4096B | W5500 以太网通信, HTTP 服务 |
+| NetworkTask | AboveNormal | 4096B | W5500 以太网通信, TCP Client 上报 |
 | SensorTask | Normal | 1024B | DHT22 温湿度采集 |
 | DisplayTask | BelowNormal | 1024B | OLED 显示更新 |
-| LEDTask | Low | 512B | 系统心跳指示灯 |
 
 ## 外设引脚
 
@@ -117,32 +97,28 @@ VSCode 调试配置 (`.vscode/launch.json`):
 | USART3_RX | PB11 | 调试串口接收 |
 | LED | PC13 | 状态指示灯 |
 
-## API 接口
+## 网络配置
 
-| 端点 | 方法 | 说明 |
-| --- | --- | --- |
-| `/` | GET | Web Dashboard 页面 |
-| `/api/sensor` | GET | JSON 格式温湿度数据 |
-| `/sse` | GET | SSE 实时数据推送 |
+默认网络参数 (在 `freertos.c` 中配置):
 
-JSON 响应示例:
+| 参数 | 值 |
+| --- | --- |
+| 本机 IP | 192.168.1.100 |
+| 子网掩码 | 255.255.255.0 |
+| 网关 | 192.168.1.1 |
+| MAC | 02:08:DC:01:02:03 |
+| 上位机 IP | 192.168.1.1 |
+| 上位机端口 | 5000 |
+| 上报间隔 | 5s |
 
-```json
-{
-  "temperature": 25.6,
-  "humidity": 62.3,
-  "status": 0,
-  "timestamp": 12345
-}
-```
+上报数据格式: `T:25.6 H:62.3\r\n`
 
 ## 技术栈
 
 - **MCU**: STM32F407VET6 (ARM Cortex-M4F, 168MHz)
 - **RTOS**: FreeRTOS (CMSIS-RTOS V2 API)
 - **构建**: CMake + arm-none-eabi-gcc
-- **代码生成**: STM32CubeMX 6.15.0
-- **固件包**: STM32Cube FW_F4 V1.28.3
+- **代码生成**: STM32CubeMX
 
 ## License
 
