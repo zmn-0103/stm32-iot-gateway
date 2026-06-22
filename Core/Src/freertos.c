@@ -52,6 +52,9 @@
 /* 共享传感器数据 (由 SensorTask 写入，其他任务读取) */
 DHT22_Data g_sensor_data = {0};
 osMutexId_t g_sensor_mutex = NULL;
+
+/* 网络状态 (由 NetworkTask 写入，DisplayTask 读取) */
+volatile uint8_t g_net_status = 0;  /* 0=INIT 1=LINK 2=CONNECTING 3=CONNECTED 4=FAIL */
 /* USER CODE END Variables */
 /* Definitions for SensorTask */
 osThreadId_t SensorTaskHandle;
@@ -211,13 +214,19 @@ void vDisplayTask(void *argument)
   OLED_Init();
 
   OLED_ShowString(1, 1, "IoT Gateway");
+  OLED_ShowString(2, 1, "NET:");
   OLED_ShowString(3, 1, "Temp:");
   OLED_ShowString(4, 1, "Humi:");
 
   DHT22_Data local;
+  const char *net_str[] = {"INIT", "LINK", "CONNECT..", "CONNECTED", "FAIL"};
 
   for(;;)
   {
+    /* 更新网络状态 (Line 2, Column 5 起) */
+    OLED_ShowString(2, 5, "          ");
+    OLED_ShowString(2, 5, (char *)net_str[g_net_status]);
+
     /* 读取共享数据 */
     if (osMutexAcquire(g_sensor_mutex, 100) == osOK) {
       local = g_sensor_data;
@@ -294,6 +303,7 @@ void vNetworkTask(void *argument)
 
   /* 初始化 W5500 */
   if (!W5500_Init(&net)) {
+    g_net_status = 4;  /* FAIL */
     len = snprintf(buf, sizeof(buf), "W5500 INIT FAIL\r\n");
     HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
     for (;;) osDelay(1000);
@@ -310,9 +320,11 @@ void vNetworkTask(void *argument)
   }
 
   if (W5500_GetPHYStatus()) {
+    g_net_status = 1;  /* LINK */
     len = snprintf(buf, sizeof(buf), "LINK UP %d.%d.%d.%d\r\n",
                    net.ip[0], net.ip[1], net.ip[2], net.ip[3]);
   } else {
+    g_net_status = 4;  /* FAIL */
     len = snprintf(buf, sizeof(buf), "LINK DOWN\r\n");
   }
   HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
@@ -327,6 +339,7 @@ void vNetworkTask(void *argument)
     }
 
     /* 2. 连接上位机 */
+    g_net_status = 2;  /* CONNECTING */
     len = snprintf(buf, sizeof(buf), "CONNECTING %d.%d.%d.%d:%d\r\n",
                    server_ip[0], server_ip[1], server_ip[2], server_ip[3],
                    SERVER_PORT);
@@ -340,6 +353,7 @@ void vNetworkTask(void *argument)
       continue;
     }
 
+    g_net_status = 3;  /* CONNECTED */
     len = snprintf(buf, sizeof(buf), "CONNECTED\r\n");
     HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
 
@@ -350,6 +364,7 @@ void vNetworkTask(void *argument)
 
       /* 检查连接是否断开 */
       if (sr == W5500_Sn_SR_CLOSE_WAIT || sr == W5500_Sn_SR_CLOSED) {
+        g_net_status = 2;  /* 回到 CONNECTING */
         len = snprintf(buf, sizeof(buf), "DISCONNECTED\r\n");
         HAL_UART_Transmit(&huart3, (uint8_t *)buf, len, 100);
         W5500_TCP_Close(SOCK_TCP);
